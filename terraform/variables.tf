@@ -13,7 +13,7 @@ variable "instance_type" {
 variable "key_name" {
   description = "Name of the existing EC2 key pair"
   type        = string
-  default     = "your-keypair"
+  default     = "us-east-1"
 }
 
 variable "app_ports" {

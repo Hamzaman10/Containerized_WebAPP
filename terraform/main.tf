@@ -96,7 +96,7 @@ resource "aws_instance" "app_server" {
   subnet_id                   = local.subnet_id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   associate_public_ip_address = true
-  key_name                    = var.key_name
+  key_name                    = "vockey"
 
   tags = merge({
     Name = "assignment1-ec2"
