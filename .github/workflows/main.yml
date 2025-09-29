@@ -14,8 +14,8 @@ jobs:
  
     env: 
       AWS_REGION: us-east-1
-      WEB_REPO: mysqldb
-      MYSQL_REPO: webapp
+      WEB_REPO: webapp
+      MYSQL_REPO: mysqldb
       IMAGE_TAG: v0.2
       SHA_TAG: ${{ github.sha }}
 
