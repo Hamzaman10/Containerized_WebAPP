@@ -1,82 +1,64 @@
-name: Deploy Flask App and MySQL to ECR
+name: Build & Push to ECR
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
+  workflow_dispatch:
 
 jobs:
-  
   build:
-    name: Build and Deploy Images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+ 
+    env: 
+      AWS_REGION: us-east-1
+      WEB_REPO: clo835-webapp
+      MYSQL_REPO: clo835-mysql
+      IMAGE_TAG: v0.2
+      SHA_TAG: ${{ github.sha }}
 
     steps:
+      - name: Checkout 
+        uses: actions/checkout@v4
 
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Configure AWS credentials (LabRole temp keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-        AWS_REGION: us-east-1
+      - name: Confirm identity
+        run: aws sts get-caller-identity
 
-    - name: Set ECR Repository Name
-      run: echo "ECR_REPOSITORY=flask-mysql-ecr" >> $GITHUB_ENV
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build, Tag, and Push MySQL Database Image to ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG_DB: mysql-v1
-      run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_DB -f Dockerfile_mysql .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_DB
-        sleep 10
+      - name: Build & push web image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -e
+          docker build --pull --no-cache \
+            -t "${REGISTRY}/${WEB_REPO}:${IMAGE_TAG}" \
+            -t "${REGISTRY}/${WEB_REPO}:${SHA_TAG::7}" \
+            -f Dockerfile .
+          docker push "${REGISTRY}/${WEB_REPO}:${IMAGE_TAG}"
+          docker push "${REGISTRY}/${WEB_REPO}:${SHA_TAG::7}"
 
-    - name: Build, Test, Tag, and Push Flask App Image to ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG_APP: app-v1
-      run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_APP -f Dockerfile .
-        sleep 10
+      - name: Build & push mysql image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -e
+          docker build --pull --no-cache \
+            -t "${REGISTRY}/${MYSQL_REPO}:${IMAGE_TAG}" \
+            -t "${REGISTRY}/${MYSQL_REPO}:${SHA_TAG::7}" \
+            -f Dockerfile_mysql .
+          docker push "${REGISTRY}/${MYSQL_REPO}:${IMAGE_TAG}"
+          docker push "${REGISTRY}/${MYSQL_REPO}:${SHA_TAG::7}"
 
-        # Create a custom Docker network
-        docker network create flask-network
-
-    - name: Run SQL Container
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG_DB: mysql-v1
-      run: |
-        
-        # Start the mysql database container in the custom network 
-        docker run -d --name mysql-db --network flask-network -e MYSQL_ROOT_PASSWORD=password -e MYSQL_DATABASE=employees $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_DB
-        
-        sleep 15  # Wait for MySQL to initialize
-
-    - name: Run App Container
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG_APP: app-v1
-      run: |
-        
-        # Start the Flask app container in the network
-        docker run -d -p 8080:8080 --name flask-app --network flask-network -e DBHOST=mysql-db -e DBUSER=root -e DBPWD=password -e DATABASE=employees -e DBPORT=3306 $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_APP
-        docker ps -a
-        docker network ls
-        sleep 10  # Wait for the Flask app to start
-
-        # Test if Flask app is running correctly or not
-        curl -vvv http://localhost:8080 || (echo "Flask App failed to start!" && exit 1)
-
-        # Cleanup after test
-        docker stop flask-app mysql-db
-        docker rm flask-app mysql-db
-        docker network rm flask-network
-
-        # Push Flask App Image
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_APP
