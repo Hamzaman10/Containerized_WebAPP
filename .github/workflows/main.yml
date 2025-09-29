@@ -29,7 +29,7 @@ jobs:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
+          aws-region:            ${{ env.AWS_REGION }}
 
       - name: Confirm identity
         run: aws sts get-caller-identity
@@ -61,3 +61,4 @@ jobs:
             -f Dockerfile_mysql .
           docker push "${REGISTRY}/${MYSQL_REPO}:${IMAGE_TAG}"
           docker push "${REGISTRY}/${MYSQL_REPO}:${SHA_TAG::7}"
+
