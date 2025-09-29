@@ -1,81 +1,63 @@
-name: Build and push to ECR
+name: Build & Push to ECR
 
 on:
   push:
-    branches: [ main ]
-
-env:
-  AWS_REGION: us-east-1
-  WEBAPP_REPO: webapp
-  MYSQL_REPO: mysqldb
+    branches: [ master ]
+  workflow_dispatch:
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+ 
+    env: 
+      AWS_REGION: us-east-1
+      WEB_REPO: clo835-webapp
+      MYSQL_REPO: clo835-mysql
+      IMAGE_TAG: v0.2
+      SHA_TAG: ${{ github.sha }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout 
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (including session token)
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials (LabRole temp keys)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
 
-      - name: Get ECR registry
-        id: ecr
+      - name: Confirm identity
+        run: aws sts get-caller-identity
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push web image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          echo "registry=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com" >> $GITHUB_OUTPUT
+          set -e
+          docker build --pull --no-cache \
+            -t "${REGISTRY}/${WEB_REPO}:${IMAGE_TAG}" \
+            -t "${REGISTRY}/${WEB_REPO}:${SHA_TAG::7}" \
+            -f Dockerfile .
+          docker push "${REGISTRY}/${WEB_REPO}:${IMAGE_TAG}"
+          docker push "${REGISTRY}/${WEB_REPO}:${SHA_TAG::7}"
 
-      - name: Ensure ECR repositories exist
+      - name: Build & push mysql image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          ACCOUNT=${{ secrets.AWS_ACCOUNT_ID }}
-          REGION=${{ secrets.AWS_REGION }}
-          WEB=${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${{ env.WEBAPP_REPO }}
-          DB=${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${{ env.MYSQL_REPO }}
-
-          aws ecr describe-repositories --repository-names "${{ env.WEBAPP_REPO }}" --region $REGION >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${{ env.WEBAPP_REPO }}" --region $REGION
-
-          aws ecr describe-repositories --repository-names "${{ env.MYSQL_REPO }}" --region $REGION >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${{ env.MYSQL_REPO }}" --region $REGION
-
-      - name: Login to ECR
-        run: |
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-            | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-
-      - name: Build MySQL image
-        run: |
-          IMAGE_TAG=${{ github.run_number }}-$(date +%s)
-          docker build -t my_db -f Dockerfile_mysql .
-          docker tag my_db:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.MYSQL_REPO }}:${IMAGE_TAG}
-          echo "MYSQL_IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.MYSQL_REPO }}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
-
-      - name: Build Webapp image
-        run: |
-          IMAGE_TAG=${{ github.run_number }}-$(date +%s)
-          docker build -t my_app -f Dockerfile .
-          docker tag my_app:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.WEBAPP_REPO }}:${IMAGE_TAG}
-          echo "WEBAPP_IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.WEBAPP_REPO }}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
-
-      - name: Push MySQL image to ECR
-        run: |
-          MYSQL_IMG=$(jq -r '.MYSQL_IMAGE' <<< "${{ toJson(steps) }}" 2>/dev/null) || true
-          # (we store earlier in $GITHUB_OUTPUT; echo it here from env if needed)
-          # Push the images we tagged above:
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.MYSQL_REPO }}:$(docker images ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.MYSQL_REPO }} --format "{{.Tag}}" | head -n1)
-
-      - name: Push Webapp image to ECR
-        run: |
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.WEBAPP_REPO }}:$(docker images ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.WEBAPP_REPO }} --format "{{.Tag}}" | head -n1)
-
-      - name: Output pushed image URIs
-        run: |
-          echo "Pushed to ECR:"
-          aws ecr describe-images --repository-name ${{ env.WEBAPP_REPO }} --region ${{ secrets.AWS_REGION }} --output json | jq -r '.imageDetails[] | .imageTags[]' || true
-          aws ecr describe-images --repository-name ${{ env.MYSQL_REPO }} --region ${{ secrets.AWS_REGION }} --output json | jq -r '.imageDetails[] | .imageTags[]' || true
-
+          set -e
+          docker build --pull --no-cache \
+            -t "${REGISTRY}/${MYSQL_REPO}:${IMAGE_TAG}" \
+            -t "${REGISTRY}/${MYSQL_REPO}:${SHA_TAG::7}" \
+            -f Dockerfile_mysql .
+          docker push "${REGISTRY}/${MYSQL_REPO}:${IMAGE_TAG}"
+          docker push "${REGISTRY}/${MYSQL_REPO}:${SHA_TAG::7}"
