@@ -14,8 +14,8 @@ jobs:
  
     env: 
       AWS_REGION: us-east-1
-      WEB_REPO: clo835-webapp
-      MYSQL_REPO: clo835-mysql
+      WEB_REPO: mysqldb
+      MYSQL_REPO: webapp
       IMAGE_TAG: v0.2
       SHA_TAG: ${{ github.sha }}
 
